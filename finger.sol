@@ -19,8 +19,12 @@ contract FingerGuess is Ownable{
     mapping(uint256 =>FingerType[]) guessResult;  //每局竞猜结果.  这里设计，数组前三为游戏发起者的猜拳，后三位为挑战者的猜拳
     uint256 feeRate = 5; //手续费  百分比
     address feeAddress; // 接收手续费转账的地址
-
     Game[] games;
+    Game[] finishedGames;
+
+    event StartGame(address indexed  sponser,address indexed tokenAddress,uint256 gameId, uint256 bonus); //开一场游戏事件
+    event Ruling(address indexed  sponser,address indexed defier,uint256 gameId, uint256 result ,uint256 bonus); //裁定结果
+
     //开始一局游戏
     function startGame(address _tokenAddress, uint256 _bonus,uint256 _gameType,FingerType[] calldata _guessResult)external payable gameChecker(_tokenAddress,_bonus,_gameType,_guessResult) {
         Game memory _game = Game({
@@ -36,6 +40,8 @@ contract FingerGuess is Ownable{
        guessResult[games.length-1] = _guessResult; //猜拳结果对应到游戏id上
 
        reciveToken(_tokenAddress, _bonus); //如果是第三方代币，需要转到合约里
+
+       emit StartGame(msg.sender, _tokenAddress, games.length-1, _bonus);
     }
     //检查猜拳结果
     function checkFingerGuess(uint256 _gameType, FingerType[] calldata _guessResult)internal pure returns ( bool ) {
@@ -80,11 +86,11 @@ contract FingerGuess is Ownable{
             reciveToken(_game.tokenAddress, _game.bonus);
         }
         //比较猜拳输赢
-        compareLogic(_game, fingers);
+        compareLogic(_game, _gameId, fingers);
         
     }
     //猜拳
-    function compareLogic(Game storage _game, FingerType[] storage _guessResult )internal {
+    function compareLogic(Game storage _game, uint256 _gameId, FingerType[] storage _guessResult )internal {
         uint256 _result = 0;
         //普通猜拳
         if(_game.gameType == 0){
@@ -109,10 +115,10 @@ contract FingerGuess is Ownable{
                 _result == 2;
             }
         }
-        sendToken(_game, _result);
+        sendToken(_game, _gameId, _result);
     }
     //游戏完成，转帐逻辑
-    function sendToken(Game storage _game, uint256 _result)internal {
+    function sendToken(Game storage _game, uint256 _gameId, uint256 _result)internal {
          uint256 _singleFee = _game.bonus * feeRate / 100; //手续费 单边
         //原生转账
         if(_game.tokenAddress == address(0)){
@@ -147,6 +153,12 @@ contract FingerGuess is Ownable{
             }
         }
         _game.status = 2;
+        //已完成游戏存储
+        finishedGames.push(_game);
+        //从数组中删除已完成游戏
+        games[_gameId] = games[games.length - 1];
+        games.pop();
+        emit Ruling(_game.sponsor, _game.defier, _gameId, _result, _game.bonus);
     }
     function guessLogic(FingerType a, FingerType b)internal pure returns (uint256){
         if(a == b){
@@ -157,6 +169,39 @@ contract FingerGuess is Ownable{
             return 2; //竞猜者胜利
         }
     }
+    //获取数据，分页模式
+    // function getGamesPage(uint256 _pageNum, uint256 _pageSize)external returns (Game[] storage results){
+        
+    //     for(uint256 i = 0;i < _pageSize; i++){
+    //         results.push();
+    //     }
+    // }
+
+    function getGamesByPage(uint256 pageNum, uint256 pageSize) public view returns (Game[] memory) {
+        require(pageNum > 0 && pageSize > 0, "Invalid pageNum or pageSize");
+        
+        uint256 startIndex = (pageNum - 1) * pageSize;
+        uint256 endIndex = startIndex + pageSize;
+        
+        if (startIndex >= games.length) {
+            // 如果起始索引超出了数组范围，返回空数组
+            return new Game[](0);
+        }
+        
+        if (endIndex > games.length) {
+            endIndex = games.length;
+        }
+        
+        Game[] memory result = new Game[](endIndex - startIndex);
+        
+        for (uint256 i = startIndex; i < endIndex; i++) {
+            result[i - startIndex] = games[i];
+        }
+        
+        return result;
+    }
+
+
     //开始游戏校验
     modifier gameChecker(address _tokenAddress, uint256 _bonus,uint256 _gameType,FingerType[] calldata _guessResult){
         require((_tokenAddress != address(0) && _bonus > 0) || (_tokenAddress == address(0) && msg.value >0 ),"Game bonus cannot be zero");
