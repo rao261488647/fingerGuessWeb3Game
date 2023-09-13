@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.21;
+pragma solidity 0.8.19;
 
 import '@openzeppelin/contracts/access/Ownable.sol';
 import '@openzeppelin/contracts/token/ERC20/ERC20.sol';
@@ -20,8 +20,8 @@ contract FingerGuess is Ownable{
     uint256 feeRate = 5; //手续费  百分比
     address feeAddress; // 接收手续费转账的地址
     Game[] games;
-    Game[] finishedGames;
-
+    // Game[] finishedGames;
+    // mapping(address => Game[]) playerGames; //用户参与的游戏
     event StartGame(address indexed  sponser,address indexed tokenAddress,uint256 gameId, uint256 bonus); //开一场游戏事件
     event Ruling(address indexed  sponser,address indexed defier,uint256 gameId, uint256 result ,uint256 bonus); //裁定结果
 
@@ -37,14 +37,19 @@ contract FingerGuess is Ownable{
             createTime: block.timestamp
        } );
        games.push(_game); //添加到游戏数组
-       guessResult[games.length-1] = _guessResult; //猜拳结果对应到游戏id上
+       FingerType[6] memory fingers;
+       fingers[0] = _guessResult[0];
+       fingers[1] = _guessResult[1];
+       fingers[2] = _guessResult[2];
+       guessResult[games.length-1] = fingers; //猜拳结果对应到游戏id上
 
-       reciveToken(_tokenAddress, _bonus); //如果是第三方代币，需要转到合约里
+       reciveToken(games[games.length - 1]); //如果是第三方代币，需要转到合约里
 
        emit StartGame(msg.sender, _tokenAddress, games.length-1, _bonus);
     }
     //检查猜拳结果
     function checkFingerGuess(uint256 _gameType, FingerType[] calldata _guessResult)internal pure returns ( bool ) {
+        require(_gameType == 0 || _gameType == 1, "Guess type error");
         bool _result = true;
         if(_gameType == 0){
             _result = _guessResult[0] == FingerType.Scissor || _guessResult[0] == FingerType.Stone || _guessResult[0] == FingerType.Cloth;
@@ -61,12 +66,14 @@ contract FingerGuess is Ownable{
        
     }
     //合约接收token
-    function reciveToken(address _tokenAddress, uint256 _bonus)internal {
+    function reciveToken(Game storage _game)internal {
         //非0地址，所以需要new erc20对象转账
-        if(_tokenAddress != address(0)){
-            ERC20 token = ERC20(_tokenAddress);
+        if(_game.tokenAddress != address(0)){
+            ERC20 token = ERC20(_game.tokenAddress);
             uint256 _decimal = token.decimals();
-            token.transferFrom(msg.sender, address(this), _bonus * 10 **_decimal);
+            uint256 amount = _game.bonus * 10 **_decimal;
+            _game.bonus = amount;
+            token.transferFrom(msg.sender, address(this), amount);
         }
     }
     //加入一个游戏
@@ -83,9 +90,11 @@ contract FingerGuess is Ownable{
         if(_game.tokenAddress == address(0)){
             require(msg.value >= _game.bonus, "Insufficient amount");
         }else{
-            reciveToken(_game.tokenAddress, _game.bonus);
+            ERC20 token = ERC20(_game.tokenAddress);
+            token.transferFrom(msg.sender, address(this), _game.bonus);
         }
-        //比较猜拳输赢
+        _game.defier = msg.sender;
+        // //比较猜拳输赢
         compareLogic(_game, _gameId, fingers);
         
     }
@@ -127,9 +136,9 @@ contract FingerGuess is Ownable{
                 payable(_game.sponsor).transfer(_game.bonus - _singleFee);
                 payable(_game.defier).transfer(_game.bonus - _singleFee);
             }else if(_result == 1){//发起者胜利
-                payable(_game.sponsor).transfer(_game.bonus - _singleFee * 2);
+                payable(_game.sponsor).transfer(_game.bonus * 2 - _singleFee * 2);
             }else{//竞猜者胜利
-                 payable(_game.defier).transfer(_game.bonus - _singleFee * 2);
+                 payable(_game.defier).transfer(_game.bonus * 2 - _singleFee * 2);
             }
             //转出手续费
             if(feeAddress != address(0)){
@@ -143,9 +152,9 @@ contract FingerGuess is Ownable{
                 token.transfer(_game.sponsor, _game.bonus - _singleFee);
                 token.transfer(_game.defier, _game.bonus - _singleFee);
             }else if(_result == 1){//发起者胜利
-                 token.transfer(_game.sponsor, _game.bonus - _singleFee * 2);
+                 token.transfer(_game.sponsor, _game.bonus * 2 - _singleFee * 2);
             }else{//竞猜者胜利
-                token.transfer(_game.defier, _game.bonus - _singleFee * 2);
+                token.transfer(_game.defier, _game.bonus * 2 - _singleFee * 2);
             }
             //转出手续费
             if(feeAddress != address(0)){
@@ -154,28 +163,38 @@ contract FingerGuess is Ownable{
         }
         _game.status = 2;
         //已完成游戏存储
-        finishedGames.push(_game);
-        //从数组中删除已完成游戏
-        games[_gameId] = games[games.length - 1];
-        games.pop();
+        // finishedGames.push(_game);
+
+        // //从数组中删除已完成游戏
+        // games[_gameId] = games[games.length - 1];
+        // games.pop();
+        // Game memory fGame = finishedGames[finishedGames.length - 1];
+        // Game[] storage sponsorGames = playerGames[fGame.sponsor];
+        // Game[] storage defierGames = playerGames[_game.defier];
+        // defierGames.push(_game); //存储用户对应的游戏
+        // defierGames.push(fGame);
+        // emit Ruling(fGame.sponsor, fGame.defier, _gameId, _result, fGame.bonus);
         emit Ruling(_game.sponsor, _game.defier, _gameId, _result, _game.bonus);
     }
     function guessLogic(FingerType a, FingerType b)internal pure returns (uint256){
         if(a == b){
             return 0; //平局
-        }else if (a > b){
+        }else if ((a == FingerType.Scissor && b == FingerType.Cloth) || (a == FingerType.Stone && b == FingerType.Scissor) || (a == FingerType.Cloth && b == FingerType.Stone)){
             return 1; //发起者胜利
         }else{
             return 2; //竞猜者胜利
         }
     }
-    //获取数据，分页模式
-    // function getGamesPage(uint256 _pageNum, uint256 _pageSize)external returns (Game[] storage results){
-        
-    //     for(uint256 i = 0;i < _pageSize; i++){
-    //         results.push();
-    //     }
-    // }
+    function getFingers(uint256 _gameId)external view returns (FingerType[] memory){
+        FingerType[] storage fingers = guessResult[_gameId];
+        return fingers;
+    }
+   function getGame(uint256 _gameId)external view returns (Game memory game){
+       game = games[_gameId];
+    }
+    function test()external view returns (address){
+        return msg.sender;
+    }
 
     function getGamesByPage(uint256 pageNum, uint256 pageSize) public view returns (Game[] memory) {
         require(pageNum > 0 && pageSize > 0, "Invalid pageNum or pageSize");
@@ -211,9 +230,6 @@ contract FingerGuess is Ownable{
 
         _;
     }
-    
-    modifier joinGameChecker(uint256 _gameId){
-        _;
-    }
+
 
 }
